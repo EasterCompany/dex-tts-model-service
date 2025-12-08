@@ -1,6 +1,8 @@
 import os
 import io
 import logging
+import time
+import psutil
 from fastapi import FastAPI, HTTPException, Body
 from fastapi.responses import Response, JSONResponse
 from pydantic import BaseModel
@@ -10,6 +12,8 @@ import contextlib # Import contextlib
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("dex-tts-service")
+
+START_TIME = time.time()
 
 # Fix for PyTorch 2.6+ weights_only=True security change
 # The "Nuclear Option": Monkey-patch torch.load to disable weights_only check
@@ -98,6 +102,36 @@ async def health_check():
             content={"status": "error", "detail": "Model not loaded"}
         )
     return {"status": "ok", "device": DEVICE, "model": "xtts_v2"}
+
+@app.get("/service")
+async def service_status():
+    process = psutil.Process(os.getpid())
+    uptime_seconds = time.time() - START_TIME
+    
+    # Format uptime string
+    m, s = divmod(uptime_seconds, 60)
+    h, m = divmod(m, 60)
+    d, h = divmod(h, 24)
+    uptime_str = f"{int(d)}d {int(h)}h {int(m)}m {int(s)}s" if d > 0 else f"{int(h)}h {int(m)}m {int(s)}s"
+
+    return {
+        "version": {
+            "str": "0.0.1",
+            "obj": {
+                "branch": "main",
+                "commit": "unknown",
+                "build_date": "unknown"
+            }
+        },
+        "health": {
+            "status": "OK" if tts_model is not None else "ERROR",
+            "uptime": uptime_str
+        },
+        "metrics": {
+            "cpu": { "avg": process.cpu_percent(interval=0.1) },
+            "memory": { "avg": process.memory_info().rss / 1024 / 1024 } # MB
+        }
+    }
 
 @app.post("/generate")
 async def generate_audio(request: GenerateRequest):
