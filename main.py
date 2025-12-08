@@ -1,6 +1,7 @@
 import os
 import io
 import logging
+import sys # Import sys
 import time
 import psutil
 from fastapi import FastAPI, HTTPException, Body
@@ -9,8 +10,16 @@ from pydantic import BaseModel
 import torch
 import contextlib # Import contextlib
 
-# Setup logging
-logging.basicConfig(level=logging.INFO)
+# Force standard streams to be unbuffered
+sys.stdout.reconfigure(line_buffering=True)
+sys.stderr.reconfigure(line_buffering=True)
+
+# Setup logging to output to stdout/stderr so systemd captures it
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
 logger = logging.getLogger("dex-tts-service")
 
 START_TIME = time.time()
@@ -183,4 +192,6 @@ async def generate_audio(request: GenerateRequest):
 
 if __name__ == "__main__":
     import uvicorn
+    # Add log_config=None to allow our logging setup to take precedence,
+    # or rely on uvicorn's default behavior which should also go to stderr/stdout.
     uvicorn.run(app, host="127.0.0.1", port=8200)
