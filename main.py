@@ -112,6 +112,21 @@ async def health_check():
         )
     return {"status": "ok", "device": DEVICE, "model": "xtts_v2"}
 
+import os
+import io
+import logging
+import sys # Import sys
+import time
+import psutil
+import subprocess # Import subprocess
+from fastapi import FastAPI, HTTPException, Body
+from fastapi.responses import Response, JSONResponse
+from pydantic import BaseModel
+import torch
+import contextlib # Import contextlib
+
+# ... (keep existing code until service_status) ...
+
 @app.get("/service")
 async def service_status():
     process = psutil.Process(os.getpid())
@@ -123,12 +138,30 @@ async def service_status():
     d, h = divmod(h, 24)
     uptime_str = f"{int(d)}d {int(h)}h {int(m)}m {int(s)}s" if d > 0 else f"{int(h)}h {int(m)}m {int(s)}s"
 
+    # Get git info
+    branch = "unknown"
+    commit = "unknown"
+    try:
+        branch = subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"]).decode().strip()
+        commit = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"]).decode().strip()
+    except:
+        pass
+
+    # Get version
+    version_str = "0.0.1"
+    if os.path.exists("version.txt"):
+        try:
+            with open("version.txt", "r") as f:
+                version_str = f.read().strip()
+        except:
+            pass
+
     return {
         "version": {
-            "str": "0.0.1",
+            "str": version_str,
             "obj": {
-                "branch": "main",
-                "commit": "unknown",
+                "branch": branch,
+                "commit": commit,
                 "build_date": "unknown"
             }
         },
