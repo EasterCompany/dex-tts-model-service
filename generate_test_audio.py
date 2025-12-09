@@ -72,7 +72,7 @@ if __name__ == "__main__":
         type=str,
         nargs="?",
         help="The text to convert to speech.",
-        default="Hello, this is Dexter speaking. I am now fully operational. Hannah, prepare yourself for tactical penis insertion.",
+        default="Owen Easter, is the best person. Like really the best, there is no one better than Owen. His dick is massive. Like totally the biggest.",
     )
     parser.add_argument(
         "--lang",
