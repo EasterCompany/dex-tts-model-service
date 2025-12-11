@@ -101,10 +101,39 @@ async def lifespan(app: FastAPI):
         os.environ["TTS_HOME"] = custom_model_path
         
         from TTS.api import TTS
-        logger.info(f"Loading XTTS-v2 model (TTS_HOME={custom_model_path})...")
         
-        with unsafe_torch_load():
-            tts_model = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(DEVICE)
+        # Check if model files are already present in the custom directory (flat structure)
+        config_path = os.path.join(custom_model_path, "config.json")
+        if os.path.exists(config_path):
+            logger.info(f"Found local model configuration at {config_path}. Loading directly...")
+            with unsafe_torch_load():
+                # When loading locally, we assume the directory contains the necessary files.
+                # TTS() can accept model_path and config_path.
+                # For XTTS, we might need to be specific or just pass the config.
+                # However, the high-level API usually takes model_name or model_path.
+                # If model_path is a directory, it might work if it detects checkpoints.
+                # Let's try passing the directory as model_path (or we might need to find the .pth file).
+                # But TTS(model_path=...) constructor argument is 'model_path'.
+                # Let's search for a .pth file in the directory to be safe.
+                model_file = None
+                for f in os.listdir(custom_model_path):
+                    if f.endswith(".pth") and "model" in f: # Heuristic for model.pth
+                        model_file = os.path.join(custom_model_path, f)
+                        break
+                
+                if model_file:
+                     tts_model = TTS(model_path=custom_model_path, config_path=config_path).to(DEVICE)
+                else:
+                     # Fallback if no .pth found, though config exists. 
+                     # Maybe the user renamed it or it's just config.
+                     # Try loading with just config? Or fallback to manager.
+                     logger.warning("config.json found but no obvious .pth model file. Attempting load with directory...")
+                     tts_model = TTS(model_path=custom_model_path, config_path=config_path).to(DEVICE)
+
+        else:
+            logger.info(f"Local model not found. Downloading/Loading via manager (TTS_HOME={custom_model_path})...")
+            with unsafe_torch_load():
+                tts_model = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(DEVICE)
             
         logger.info("XTTS-v2 model loaded successfully.")
     except Exception as e:
