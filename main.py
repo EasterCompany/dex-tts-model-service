@@ -95,8 +95,13 @@ async def lifespan(app: FastAPI):
     global tts_model
     logger.info(f"Starting TTS Service on device: {DEVICE}")
     try:
+        # Set custom model path
+        custom_model_path = os.path.expanduser("~/Dexter/models/xtts")
+        os.makedirs(custom_model_path, exist_ok=True)
+        os.environ["TTS_HOME"] = custom_model_path
+        
         from TTS.api import TTS
-        logger.info("Loading XTTS-v2 model (with weights_only=False override)...")
+        logger.info(f"Loading XTTS-v2 model (TTS_HOME={custom_model_path})...")
         
         with unsafe_torch_load():
             tts_model = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(DEVICE)
