@@ -171,8 +171,8 @@ async def service_status():
     branch = "unknown"
     commit = "unknown"
     try:
-        branch = subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"]).decode().strip()
-        commit = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"]).decode().strip()
+        branch = subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"], stderr=subprocess.DEVNULL).decode().strip()
+        commit = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], stderr=subprocess.DEVNULL).decode().strip()
     except:
         pass
 
@@ -187,7 +187,7 @@ async def service_status():
     else:
         # Try to get from git tags
         try:
-            version_str = subprocess.check_output(["git", "describe", "--tags", "--abbrev=0"]).decode().strip()
+            version_str = subprocess.check_output(["git", "describe", "--tags", "--abbrev=0"], stderr=subprocess.DEVNULL).decode().strip()
             # Remove 'v' prefix if present
             if version_str.startswith("v"):
                 version_str = version_str[1:]
