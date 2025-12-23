@@ -194,18 +194,32 @@ async def service_status():
         except:
             pass
 
+    version_parts = version_str.split('.')
+    major = version_parts[0] if len(version_parts) > 0 else "0"
+    minor = version_parts[1] if len(version_parts) > 1 else "0"
+    patch = version_parts[2] if len(version_parts) > 2 else "0"
+
+    import platform
+    arch = platform.machine()
+
     return {
         "version": {
             "str": version_str,
             "obj": {
+                "major": major,
+                "minor": minor,
+                "patch": patch,
                 "branch": branch,
                 "commit": commit,
-                "build_date": "unknown"
+                "build_date": "unknown",
+                "arch": arch,
+                "build_hash": "unknown"
             }
         },
         "health": {
-            "status": "OK" if tts_model is not None else "ERROR",
-            "uptime": uptime_str
+            "status": "ok" if tts_model is not None else "error",
+            "uptime": uptime_str,
+            "message": "TTS Model Loaded" if tts_model is not None else "TTS Model Not Loaded"
         },
         "metrics": {
             "cpu": { "avg": process.cpu_percent(interval=0.1) },
