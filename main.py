@@ -51,7 +51,7 @@ tts_model = None
 # Redis Client
 redis_client = None
 try:
-    redis_client = redis.Redis(host='localhost', port=6379, db=0)
+    redis_client = redis.Redis(host='127.0.0.1', port=6379, db=0)
     # Test connection
     redis_client.ping()
     logger.info("Connected to Redis successfully.")
