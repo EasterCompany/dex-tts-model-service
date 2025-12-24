@@ -24,9 +24,15 @@ const (
 	InternalPort = "8202"
 	PublicPort   = "8200"
 	ServiceName  = "dex-tts-service"
+	Version      = "0.0.17"
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "version" {
+		fmt.Println(Version)
+		return
+	}
+
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	log.Printf("Starting %s Wrapper...", ServiceName)
 
