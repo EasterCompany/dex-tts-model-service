@@ -26,6 +26,8 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[logging.StreamHandler(sys.stdout)]
 )
+# Mute uvicorn access logs
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 logger = logging.getLogger("dex-tts-service")
 
 START_TIME = time.time()
