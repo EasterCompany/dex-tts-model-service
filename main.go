@@ -342,7 +342,7 @@ func main() {
 		// Priority: ldflags > environment variable > default
 		v := version
 		if v == "0.0.0" || v == "" {
-			v = os.Getenv("DEX_BUILD_VERSION")
+			v = os.Getenv("DEX_VERSION")
 		}
 		if v == "" {
 			v = "0.0.0"
