@@ -336,6 +336,8 @@ if __name__ == "__main__":
 `
 
 var version = "0.0.0"
+var branch = "unknown"
+var commit = "unknown"
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "version" {
@@ -395,28 +397,40 @@ func main() {
 
 	log.Println("Starting Dexter TTS Service...")
 
-	// Pass environment variables to Python process
 	pythonCmd := exec.Command(filepath.Join(venvDir, "bin", "python"), "main.py")
 	pythonCmd.Dir = serviceDir
 
-	// Inherit environment and add/override DEX_VERSION
+	// Inherit environment and add/override DEX variables
 	v := version
 	if v == "0.0.0" || v == "" {
 		v = os.Getenv("DEX_VERSION")
 	}
 
-	pythonCmd.Env = append(os.Environ(), fmt.Sprintf("DEX_VERSION=%s", v))
+	b := branch
+	if b == "unknown" || b == "" {
+		b = os.Getenv("DEX_BRANCH")
+	}
+
+	c := commit
+	if c == "unknown" || c == "" {
+		c = os.Getenv("DEX_COMMIT")
+	}
+
+	pythonCmd.Env = append(os.Environ(),
+		fmt.Sprintf("DEX_VERSION=%s", v),
+		fmt.Sprintf("DEX_BRANCH=%s", b),
+		fmt.Sprintf("DEX_COMMIT=%s", c),
+	)
+
 	pythonCmd.Stdout = os.Stdout
 	pythonCmd.Stderr = os.Stderr
-
 	// Handle signals
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	go func() {
-		<-c
+		<-sigChan
 		_ = pythonCmd.Process.Signal(os.Interrupt)
 	}()
-
 	if err := pythonCmd.Run(); err != nil {
 		log.Printf("Service exited with error: %v", err)
 		os.Exit(1)
