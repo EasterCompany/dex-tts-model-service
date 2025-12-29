@@ -237,7 +237,7 @@ async def service_status():
             "message": "TTS Model Loaded" if tts_model is not None else "TTS Model Not Loaded"
         },
         "metrics": {
-            "cpu": { "avg": process.cpu_percent(interval=0.1) },
+            "cpu": { "avg": process.cpu_percent(interval=None) },
             "memory": { "avg": process.memory_info().rss / 1024 / 1024 }
         }
     }
