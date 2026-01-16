@@ -219,7 +219,7 @@ async def service_status():
     arch = os.getenv("DEX_ARCH", arch)
     build_hash = os.getenv("DEX_BUILD_HASH", "unknown")
 
-    full_version_str = f"{version_str}.{branch}.{commit}.{build_date}.{arch}.{build_hash}"
+    full_version_str = f"{version_str}.{branch}.{commit}.{build_date}.{arch}"
 
     return {
         "version": {
