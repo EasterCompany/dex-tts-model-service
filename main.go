@@ -216,10 +216,14 @@ async def service_status():
 
     import platform
     arch = platform.machine()
+    arch = os.getenv("DEX_ARCH", arch)
+    build_hash = os.getenv("DEX_BUILD_HASH", "unknown")
+
+    full_version_str = f"{version_str}.{branch}.{commit}.{build_date}.{arch}.{build_hash}"
 
     return {
         "version": {
-            "str": version_str,
+            "str": full_version_str,
             "obj": {
                 "major": major,
                 "minor": minor,
@@ -228,7 +232,7 @@ async def service_status():
                 "commit": commit,
                 "build_date": build_date,
                 "arch": arch,
-                "build_hash": "unknown"
+                "build_hash": build_hash
             }
         },
         "health": {
@@ -335,9 +339,15 @@ if __name__ == "__main__":
     uvicorn.run(app, host=host, port=port, log_config=log_config)
 `
 
-var version = "0.0.0"
-var branch = "unknown"
-var commit = "unknown"
+var (
+	version   = "0.0.0"
+	branch    = "unknown"
+	commit    = "unknown"
+	buildDate = "unknown"
+	buildYear = "unknown"
+	buildHash = "unknown"
+	arch      = "unknown"
+)
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "version" {
@@ -420,6 +430,10 @@ func main() {
 		fmt.Sprintf("DEX_VERSION=%s", v),
 		fmt.Sprintf("DEX_BRANCH=%s", b),
 		fmt.Sprintf("DEX_COMMIT=%s", c),
+		fmt.Sprintf("DEX_BUILD_DATE=%s", buildDate),
+		fmt.Sprintf("DEX_BUILD_YEAR=%s", buildYear),
+		fmt.Sprintf("DEX_ARCH=%s", arch),
+		fmt.Sprintf("DEX_BUILD_HASH=%s", buildHash),
 	)
 
 	pythonCmd.Stdout = os.Stdout
