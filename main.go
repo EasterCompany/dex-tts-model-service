@@ -152,6 +152,7 @@ class GenerateRequest(BaseModel):
     text: str
     language: str = "en"
     speaker_wav: str = DEFAULT_SPEAKER_PATH
+    output_path: str = None
 
 @app.get("/health")
 async def health_check():
@@ -315,6 +316,11 @@ async def generate_audio(request: GenerateRequest):
              raise HTTPException(status_code=400, detail="No audio generated from text.")
 
         full_audio = np.concatenate(final_wav_parts)
+
+        # Check if output_path is provided
+        if request.output_path:
+            scipy.io.wavfile.write(request.output_path, 24000, full_audio)
+            return {"status": "ok", "file_path": request.output_path}
 
         # Convert to WAV in memory
         buffer = io.BytesIO()
