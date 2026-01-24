@@ -54,14 +54,14 @@ START_TIME = time.time()
 
 # Constants
 PIPER_URL = "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz"
-VOICE_MODEL_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/libritts/high/en_US-libritts-high.onnx"
-VOICE_CONFIG_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/libritts/high/en_US-libritts-high.onnx.json"
+VOICE_MODEL_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/ryan/high/en_US-ryan-high.onnx"
+VOICE_CONFIG_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/ryan/high/en_US-ryan-high.onnx.json"
 
 BIN_DIR = os.path.expanduser("~/Dexter/bin")
 MODELS_DIR = os.path.expanduser("~/Dexter/models/piper")
 PIPER_BIN = os.path.join(BIN_DIR, "piper", "piper")
-VOICE_MODEL_PATH = os.path.join(MODELS_DIR, "en_US-libritts-high.onnx")
-VOICE_CONFIG_PATH = os.path.join(MODELS_DIR, "en_US-libritts-high.onnx.json")
+VOICE_MODEL_PATH = os.path.join(MODELS_DIR, "en_US-ryan-high.onnx")
+VOICE_CONFIG_PATH = os.path.join(MODELS_DIR, "en_US-ryan-high.onnx.json")
 
 # Redis Client
 redis_client = None
