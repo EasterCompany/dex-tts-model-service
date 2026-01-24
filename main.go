@@ -1,297 +1,281 @@
 package main
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
+	"crypto/md5"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
-	"syscall"
+	"runtime"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
-// requirementsTxt content (Minimal for FastAPI wrapper)
-const requirementsTxt = `fastapi>=0.109.0
-uvicorn[standard]>=0.27.0
-pydantic>=2.6.0
-python-multipart
-requests
-redis
-psutil
-`
-
-// mainPy content
-const mainPy = `import os
-import sys
-import logging
-import time
-import psutil
-import subprocess
-import requests
-import tarfile
-import io
-import json
-import redis
-import hashlib
-from fastapi import FastAPI, HTTPException, Body
-from fastapi.responses import Response, JSONResponse
-from pydantic import BaseModel
-
-# Force standard streams to be unbuffered
-sys.stdout.reconfigure(line_buffering=True)
-sys.stderr.reconfigure(line_buffering=True)
-
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)]
+const (
+	ServiceName    = "dex-tts-service"
+	PiperUrl       = "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz"
+	VoiceModelUrl  = "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/northern_english_male/medium/en_GB-northern_english_male-medium.onnx"
+	VoiceConfigUrl = "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/northern_english_male/medium/en_GB-northern_english_male-medium.onnx.json"
 )
-logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
-logger = logging.getLogger("dex-tts-service")
-
-START_TIME = time.time()
-
-# Constants
-PIPER_URL = "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz"
-VOICE_MODEL_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/ryan/high/en_US-ryan-high.onnx"
-VOICE_CONFIG_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/ryan/high/en_US-ryan-high.onnx.json"
-
-BIN_DIR = os.path.expanduser("~/Dexter/bin")
-MODELS_DIR = os.path.expanduser("~/Dexter/models/piper")
-PIPER_BIN = os.path.join(BIN_DIR, "piper", "piper")
-VOICE_MODEL_PATH = os.path.join(MODELS_DIR, "en_US-ryan-high.onnx")
-VOICE_CONFIG_PATH = os.path.join(MODELS_DIR, "en_US-ryan-high.onnx.json")
-
-# Redis Client
-redis_client = None
-try:
-    redis_client = redis.Redis(host='127.0.0.1', port=6379, db=0)
-    redis_client.ping()
-    logger.info("Connected to Redis successfully.")
-except Exception as e:
-    logger.warning(f"Failed to connect to Redis: {e}")
-    redis_client = None
-
-def download_file(url, path):
-    if os.path.exists(path):
-        return
-    logger.info(f"Downloading {url} to {path}...")
-    response = requests.get(url, stream=True)
-    response.raise_for_status()
-    with open(path, "wb") as f:
-        for chunk in response.iter_content(chunk_size=8192):
-            f.write(chunk)
-    logger.info(f"Downloaded {path}")
-
-def setup_piper():
-    # 1. Setup Binary
-    if not os.path.exists(PIPER_BIN):
-        logger.info("Piper binary not found. Downloading...")
-        os.makedirs(BIN_DIR, exist_ok=True)
-        tar_path = os.path.join(BIN_DIR, "piper.tar.gz")
-        download_file(PIPER_URL, tar_path)
-        
-        logger.info("Extracting Piper...")
-        with tarfile.open(tar_path, "r:gz") as tar:
-            tar.extractall(path=BIN_DIR)
-        os.remove(tar_path)
-        logger.info("Piper installed.")
-
-    # 2. Setup Model
-    os.makedirs(MODELS_DIR, exist_ok=True)
-    try:
-        download_file(VOICE_MODEL_URL, VOICE_MODEL_PATH)
-        download_file(VOICE_CONFIG_URL, VOICE_CONFIG_PATH)
-    except Exception as e:
-        logger.error(f"Failed to download voice model: {e}")
-        # Allow startup without model, but generation will fail
-
-app = FastAPI(title="Dexter Piper TTS", version="1.0.0")
-
-@app.on_event("startup")
-async def startup_event():
-    setup_piper()
-
-class GenerateRequest(BaseModel):
-    text: str
-    language: str = "en"
-    output_path: str = None
-
-@app.get("/health")
-async def health_check():
-    if os.path.exists(PIPER_BIN) and os.path.exists(VOICE_MODEL_PATH):
-        return {"status": "ok", "engine": "piper"}
-    return JSONResponse(status_code=503, content={"status": "error", "detail": "Piper or Model missing"})
-
-@app.get("/service")
-async def service_status():
-    process = psutil.Process(os.getpid())
-    uptime_seconds = time.time() - START_TIME
-    
-    # Try Environment Variables
-    version_str = os.getenv("DEX_VERSION", "0.0.0")
-    
-    return {
-        "version": {"str": version_str, "obj": {}},
-        "health": {"status": "ok", "uptime": f"{uptime_seconds:.2f}s"},
-        "metrics": {
-            "cpu": { "avg": process.cpu_percent(interval=None) },
-            "memory": { "avg": process.memory_info().rss / 1024 / 1024 }
-        }
-    }
-
-@app.post("/generate")
-async def generate_audio(request: GenerateRequest):
-    if not request.text:
-        raise HTTPException(status_code=400, detail="Text required")
-
-    try:
-        # Check Cache
-        text_hash = hashlib.md5(request.text.encode()).hexdigest()
-        key = f"tts:piper:{text_hash}"
-        
-        if redis_client:
-            cached = redis_client.get(key)
-            if cached:
-                # logger.info("Cache hit")
-                return Response(content=cached, media_type="audio/wav")
-
-        # Run Piper
-        cmd = [
-            PIPER_BIN,
-            "--model", VOICE_MODEL_PATH,
-            "--output_file", "-"
-        ]
-
-        start = time.time()
-        process = subprocess.Popen(
-            cmd, 
-            stdin=subprocess.PIPE, 
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
-        )
-        
-        wav_data, stderr = process.communicate(input=request.text.encode('utf-8'))
-        
-        if process.returncode != 0:
-            logger.error(f"Piper error: {stderr.decode()}")
-            raise Exception("Piper generation failed")
-
-        duration = time.time() - start
-        logger.info(f"Generated audio in {duration:.3f}s")
-
-        if redis_client:
-            redis_client.set(key, wav_data)
-
-        if request.output_path:
-            with open(request.output_path, "wb") as f:
-                f.write(wav_data)
-            return {"status": "ok", "file_path": request.output_path}
-
-        return Response(content=wav_data, media_type="audio/wav")
-
-    except Exception as e:
-        logger.error(f"Generation failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-if __name__ == "__main__":
-    import uvicorn
-    host = os.getenv("HOST", "127.0.0.1")
-    port = int(os.getenv("PORT", "8200"))
-    uvicorn.run(app, host=host, port=port)
-`
 
 var (
 	version   = "0.0.0"
 	branch    = "unknown"
 	commit    = "unknown"
 	buildDate = "unknown"
-	buildYear = "unknown"
-	buildHash = "unknown"
-	arch      = "unknown"
+	arch      = runtime.GOARCH
+	startTime = time.Now()
+
+	redisClient *redis.Client
+	mu          sync.Mutex
+	isReady     = false
 )
+
+type GenerateRequest struct {
+	Text       string `json:"text"`
+	OutputPath string `json:"output_path,omitempty"`
+}
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "version" {
-		v := version
-		if v == "0.0.0" || v == "" {
-			v = os.Getenv("DEX_VERSION")
+		fmt.Printf("%s.%s.%s.%s.%s\n", version, branch, commit, buildDate, arch)
+		os.Exit(0)
+	}
+
+	setupRedis()
+
+	// Async setup to not block startup, but handleGenerate will wait if not ready
+	go func() {
+		if err := ensureAssets(); err != nil {
+			log.Printf("Asset setup failed: %v", err)
+		} else {
+			mu.Lock()
+			isReady = true
+			mu.Unlock()
+			log.Println("TTS Assets ready.")
 		}
-		if v == "" {
-			v = "0.0.0"
+	}()
+
+	http.HandleFunc("/generate", handleGenerate)
+	http.HandleFunc("/hibernate", handleHibernate)
+	http.HandleFunc("/wakeup", handleWakeup)
+	http.HandleFunc("/health", handleHealth)
+	http.HandleFunc("/service", handleService)
+
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8200"
+	}
+
+	log.Printf("Starting Dexter TTS Service (Piper-Go) on port %s", port)
+	if err := http.ListenAndServe(":"+port, nil); err != nil {
+		log.Fatalf("Server failed: %v", err)
+	}
+}
+
+func setupRedis() {
+	redisClient = redis.NewClient(&redis.Options{
+		Addr: "127.0.0.1:6379",
+	})
+}
+
+func ensureAssets() error {
+	home, _ := os.UserHomeDir()
+	binDir := filepath.Join(home, "Dexter", "bin")
+	piperBin := filepath.Join(binDir, "piper", "piper")
+	modelsDir := filepath.Join(home, "Dexter", "models", "piper")
+	voicePath := filepath.Join(modelsDir, "en_GB-northern_english_male-medium.onnx")
+	configPath := filepath.Join(modelsDir, "en_GB-northern_english_male-medium.onnx.json")
+
+	// 1. Piper Binary
+	if _, err := os.Stat(piperBin); os.IsNotExist(err) {
+		log.Println("Downloading and installing Piper binary...")
+		if err := downloadAndExtract(PiperUrl, binDir); err != nil {
+			return err
 		}
-		fmt.Printf("%s.%s.%s.%s.%s.%s.%s\n", v, branch, commit, buildDate, buildYear, buildHash, arch)
+	}
+
+	// 2. Voice Assets
+	_ = os.MkdirAll(modelsDir, 0755)
+	if _, err := os.Stat(voicePath); os.IsNotExist(err) {
+		log.Println("Downloading Northern English male voice model...")
+		if err := downloadFile(VoiceModelUrl, voicePath); err != nil {
+			return err
+		}
+	}
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		if err := downloadFile(VoiceConfigUrl, configPath); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func downloadFile(url, dest string) error {
+	resp, err := http.Get(url)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	out, err := os.Create(dest)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = out.Close() }()
+	_, err = io.Copy(out, resp.Body)
+	return err
+}
+
+func downloadAndExtract(url, destDir string) error {
+	resp, err := http.Get(url)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	uncompressed, err := gzip.NewReader(resp.Body)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = uncompressed.Close() }()
+
+	archive := tar.NewReader(uncompressed)
+	for {
+		header, err := archive.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+
+		target := filepath.Join(destDir, header.Name)
+		switch header.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(target, 0755); err != nil {
+				return err
+			}
+		case tar.TypeReg:
+			f, err := os.OpenFile(target, os.O_CREATE|os.O_RDWR, os.FileMode(header.Mode))
+			if err != nil {
+				return err
+			}
+			if _, err := io.Copy(f, archive); err != nil {
+				_ = f.Close()
+				return err
+			}
+			_ = f.Close()
+		}
+	}
+	return nil
+}
+
+func handleGenerate(w http.ResponseWriter, r *http.Request) {
+	mu.Lock()
+	ready := isReady
+	mu.Unlock()
+
+	if !ready {
+		http.Error(w, "TTS engine initializing", http.StatusServiceUnavailable)
 		return
 	}
 
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		log.Fatalf("Failed to get user home directory: %v", err)
+	var req GenerateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
 	}
 
-	serviceDir := filepath.Join(homeDir, "Dexter", "services", "dex-tts-service")
-	if err := os.MkdirAll(serviceDir, 0755); err != nil {
-		log.Fatalf("Failed to create service directory: %v", err)
+	hash := md5.Sum([]byte(req.Text))
+	cacheKey := "tts:cache:" + hex.EncodeToString(hash[:])
+
+	if redisClient != nil {
+		if val, err := redisClient.Get(r.Context(), cacheKey).Bytes(); err == nil {
+			w.Header().Set("Content-Type", "audio/wav")
+			_, _ = w.Write(val)
+			return
+		}
 	}
 
-	if err := os.WriteFile(filepath.Join(serviceDir, "requirements.txt"), []byte(requirementsTxt), 0644); err != nil {
-		log.Fatalf("Failed to write requirements.txt: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(serviceDir, "main.py"), []byte(mainPy), 0644); err != nil {
-		log.Fatalf("Failed to write main.py: %v", err)
-	}
+	home, _ := os.UserHomeDir()
+	piperBin := filepath.Join(home, "Dexter", "bin", "piper", "piper")
+	voicePath := filepath.Join(home, "Dexter", "models", "piper", "en_GB-northern_english_male-medium.onnx")
 
-	// Load options.json (Not needed for Piper as it's CPU optimized, but good for completeness)
+	cmd := exec.Command(piperBin, "--model", voicePath, "--output_file", "-")
+	cmd.Stdin = strings.NewReader(req.Text)
+	var out bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &stderr
 
-	pythonEnvDir := filepath.Join(homeDir, "Dexter", "python3.10")
-	pythonBin := filepath.Join(pythonEnvDir, "bin", "python")
-	pipBin := filepath.Join(pythonEnvDir, "bin", "pip")
-
-	if _, err := os.Stat(pythonBin); os.IsNotExist(err) {
-		log.Fatalf("Shared Python 3.10 environment not found at %s.", pythonBin)
-	}
-
-	log.Println("Ensuring pip is up-to-date...")
-	pipUpdateCmd := exec.Command(pipBin, "install", "--upgrade", "pip")
-	_ = pipUpdateCmd.Run()
-
-	log.Println("Installing dependencies into shared environment...")
-	pipCmd := exec.Command(pipBin, "install", "-r", "requirements.txt")
-	pipCmd.Dir = serviceDir
-	pipCmd.Stdout = os.Stdout
-	pipCmd.Stderr = os.Stderr
-	if err := pipCmd.Run(); err != nil {
-		log.Printf("Warning: Failed to install dependencies: %v", err)
+	if err := cmd.Run(); err != nil {
+		log.Printf("Piper Error: %v, Stderr: %s", err, stderr.String())
+		http.Error(w, "Generation failed", http.StatusInternalServerError)
+		return
 	}
 
-	log.Println("Starting Dexter TTS Service (Piper)...")
-
-	pythonCmd := exec.Command(pythonBin, "main.py")
-	pythonCmd.Dir = serviceDir
-
-	v := version
-	if v == "0.0.0" || v == "" {
-		v = os.Getenv("DEX_VERSION")
+	if redisClient != nil {
+		redisClient.Set(r.Context(), cacheKey, out.Bytes(), 48*time.Hour)
 	}
-	// Environment Variables injection
-	pythonCmd.Env = append(os.Environ(),
-		fmt.Sprintf("DEX_VERSION=%s", v),
-		// ... (truncated for brevity, assuming standard env pass through)
-	)
 
-	pythonCmd.Stdout = os.Stdout
-	pythonCmd.Stderr = os.Stderr
+	w.Header().Set("Content-Type", "audio/wav")
+	_, _ = w.Write(out.Bytes())
+}
 
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		<-sigChan
-		_ = pythonCmd.Process.Signal(os.Interrupt)
-	}()
+func handleHibernate(w http.ResponseWriter, r *http.Request) {
+	// Piper is process-based, no persistent VRAM usage when idle.
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(`{"status":"ok","message":"process-idle"}`))
+}
 
-	if err := pythonCmd.Run(); err != nil {
-		log.Printf("Service exited with error: %v", err)
-		os.Exit(1)
+func handleWakeup(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(`{"status":"ok","message":"ready"}`))
+}
+
+func handleHealth(w http.ResponseWriter, r *http.Request) {
+	mu.Lock()
+	ready := isReady
+	mu.Unlock()
+	if !ready {
+		http.Error(w, "initializing", http.StatusServiceUnavailable)
+		return
 	}
+	_, _ = w.Write([]byte("OK"))
+}
+
+func handleService(w http.ResponseWriter, r *http.Request) {
+	vParts := strings.Split(version, ".")
+	major, minor, patch := "0", "0", "0"
+	if len(vParts) >= 3 {
+		major, minor, patch = vParts[0], vParts[1], vParts[2]
+	}
+
+	report := map[string]interface{}{
+		"version": map[string]interface{}{
+			"str": fmt.Sprintf("%s.%s.%s.%s.%s", version, branch, commit, buildDate, arch),
+			"obj": map[string]interface{}{
+				"major": major, "minor": minor, "patch": patch,
+				"branch": branch, "commit": commit, "build_date": buildDate, "arch": arch,
+			},
+		},
+		"health": map[string]interface{}{
+			"status": "OK",
+			"uptime": time.Since(startTime).String(),
+		},
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(report)
 }
