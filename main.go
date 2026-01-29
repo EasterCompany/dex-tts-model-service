@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/EasterCompany/dex-tts-service/utils"
 )
 
 const (
@@ -163,6 +165,7 @@ func handleService(w http.ResponseWriter, r *http.Request) {
 			"status": "OK",
 			"uptime": time.Since(startTime).String(),
 		},
+		"metrics": utils.GetMetrics(),
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(report)
