@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -23,12 +22,12 @@ const (
 )
 
 var (
+	// Version info injected by build
 	version   = "0.0.0"
 	branch    = "unknown"
 	commit    = "unknown"
 	buildDate = "unknown"
-	arch      = runtime.GOARCH
-	startTime = time.Now()
+	arch      = "unknown"
 
 	mu      sync.Mutex
 	isReady = false
@@ -41,8 +40,10 @@ type GenerateRequest struct {
 }
 
 func main() {
+	utils.SetVersion(version, branch, commit, buildDate, arch)
+
 	if len(os.Args) > 1 && os.Args[1] == "version" {
-		fmt.Printf("%s.%s.%s.%s.%s\n", version, branch, commit, buildDate, arch)
+		fmt.Println(utils.GetVersion().Str)
 		os.Exit(0)
 	}
 
@@ -82,6 +83,7 @@ func main() {
 	}
 
 	log.Printf("Starting Dexter TTS Service (Neural TTS Kernel) on port %s", port)
+	utils.SetHealthStatus("OK", "Service is running")
 	if err := http.ListenAndServe(":"+port, nil); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
@@ -147,25 +149,10 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleService(w http.ResponseWriter, r *http.Request) {
-	vParts := strings.Split(version, ".")
-	major, minor, patch := "0", "0", "0"
-	if len(vParts) >= 3 {
-		major, minor, patch = vParts[0], vParts[1], vParts[2]
-	}
-
-	report := map[string]interface{}{
-		"version": map[string]interface{}{
-			"str": fmt.Sprintf("%s.%s.%s.%s.%s", version, branch, commit, buildDate, arch),
-			"obj": map[string]interface{}{
-				"major": major, "minor": minor, "patch": patch,
-				"branch": branch, "commit": commit, "build_date": buildDate, "arch": arch,
-			},
-		},
-		"health": map[string]interface{}{
-			"status": "OK",
-			"uptime": time.Since(startTime).String(),
-		},
-		"metrics": utils.GetMetrics(),
+	report := utils.ServiceReport{
+		Version: utils.GetVersion(),
+		Health:  utils.GetHealth(),
+		Metrics: utils.GetMetrics().ToMap(),
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(report)
