@@ -114,8 +114,13 @@ func handleGenerate(w http.ResponseWriter, r *http.Request) {
 		req.OutputPath = fmt.Sprintf("/tmp/tts-%d.wav", time.Now().UnixNano())
 	}
 
+	log.Printf("TTS: [EXEC] Generating audio for: \"%.50s...\" (2m timeout)", req.Text)
+
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+
 	// dex-net-tts -m <model> -f <output>
-	cmd := exec.Command(ttsBin, "-m", voicePath, "-f", req.OutputPath)
+	cmd := exec.CommandContext(ctx, ttsBin, "-m", voicePath, "-f", req.OutputPath)
 
 	// Ensure engine can find its own libs in the same dir
 	cmd.Env = append(os.Environ(), fmt.Sprintf("LD_LIBRARY_PATH=%s:%s", binDir, os.Getenv("LD_LIBRARY_PATH")))
@@ -125,10 +130,16 @@ func handleGenerate(w http.ResponseWriter, r *http.Request) {
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		log.Printf("Neural TTS Kernel failed: %v, Stderr: %s", err, stderr.String())
+		if ctx.Err() == context.DeadlineExceeded {
+			log.Printf("TTS: [ERROR] Timeout exceeded (2m)")
+		} else {
+			log.Printf("TTS: [ERROR] Neural TTS Kernel failed: %v, Stderr: %s", err, stderr.String())
+		}
 		http.Error(w, "Generation failed", http.StatusInternalServerError)
 		return
 	}
+
+	log.Printf("TTS: [SUCCESS] Audio generated at %s", req.OutputPath)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{
