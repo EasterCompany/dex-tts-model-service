@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/EasterCompany/dex-go-utils/network"
 	"github.com/EasterCompany/dex-tts-service/utils"
 )
 
@@ -29,8 +31,9 @@ var (
 	buildDate = "unknown"
 	arch      = "unknown"
 
-	mu      sync.Mutex
-	isReady = false
+	mu       sync.Mutex
+	isReady  = false
+	noWarmup = false
 )
 
 type GenerateRequest struct {
@@ -47,6 +50,7 @@ func main() {
 		os.Exit(0)
 	}
 
+	flag.BoolVar(&noWarmup, "no-warmup", false, "Skip model warmup on boot")
 	flag.Parse()
 
 	// Async setup
@@ -79,12 +83,16 @@ func main() {
 
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8200"
+		port = "8402"
 	}
 
-	log.Printf("Starting Dexter TTS Service (Neural TTS Kernel) on port %s", port)
+	// Determine Binding Address
+	bindAddr := network.GetBestBindingAddress()
+	addr := fmt.Sprintf("%s:%s", bindAddr, port)
+
+	log.Printf("Starting Dexter TTS Service on %s", addr)
 	utils.SetHealthStatus("OK", "Service is running")
-	if err := http.ListenAndServe(":"+port, nil); err != nil {
+	if err := http.ListenAndServe(addr, nil); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
 }
