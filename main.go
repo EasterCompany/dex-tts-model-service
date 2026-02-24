@@ -92,7 +92,7 @@ func main() {
 
 	log.Printf("Starting Dexter TTS Service on %s", addr)
 	utils.SetHealthStatus("OK", "Service is running")
-	if err := http.ListenAndServe(addr, nil); err != nil {
+	if err := http.ListenAndServe(addr, network.AuthMiddleware(http.DefaultServeMux)); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
 }
