@@ -83,7 +83,7 @@ func main() {
 
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8402"
+		port = "24402"
 	}
 
 	// Determine Binding Address
